@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../youtube/shorts_item.dart';
 import '../youtube/shorts_repository.dart';
 import 'feed_controller.dart';
+import 'shorts_playback_pool.dart';
 import 'shorts_player_page.dart';
 
 class ShortsFeedPage extends ConsumerStatefulWidget {
@@ -15,12 +17,26 @@ class ShortsFeedPage extends ConsumerStatefulWidget {
 
 class _ShortsFeedPageState extends ConsumerState<ShortsFeedPage> {
   final _pageController = PageController();
+  final _playbackPool = ShortsPlaybackPool();
   var _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    ref.listenManual<AsyncValue<FeedState>>(feedProvider, (_, next) {
+      next.whenOrNull(data: (state) => _preloadPlayback(state.items));
+    }, fireImmediately: true);
+  }
 
   @override
   void dispose() {
     _pageController.dispose();
+    _playbackPool.dispose();
     super.dispose();
+  }
+
+  void _preloadPlayback(List<ShortsItem> items) {
+    _playbackPool.preloadAround(items, _currentIndex);
   }
 
   @override
@@ -38,6 +54,7 @@ class _ShortsFeedPageState extends ConsumerState<ShortsFeedPage> {
               onPageChanged: (index) {
                 final previousIndex = _currentIndex;
                 setState(() => _currentIndex = index);
+                _playbackPool.preloadAround(state.items, index);
                 if (index > previousIndex) {
                   ref.read(feedProvider.notifier).loadNextForSwipe(index);
                 }
@@ -50,6 +67,7 @@ class _ShortsFeedPageState extends ConsumerState<ShortsFeedPage> {
                 return ShortsPlayerPage(
                   key: ValueKey(item.videoId),
                   item: item,
+                  playback: _playbackPool.entryFor(item.videoId),
                   isActive: index == _currentIndex,
                 );
               },

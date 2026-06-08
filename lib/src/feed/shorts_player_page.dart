@@ -3,18 +3,18 @@ import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../youtube/shorts_item.dart';
-import '../youtube/youtube_playback_resolver.dart';
-
-final _playbackResolver = YoutubePlaybackResolver();
+import 'shorts_playback_pool.dart';
 
 class ShortsPlayerPage extends StatefulWidget {
   const ShortsPlayerPage({
     super.key,
     required this.item,
+    required this.playback,
     required this.isActive,
   });
 
   final ShortsItem item;
+  final ShortsPlaybackEntry playback;
   final bool isActive;
 
   @override
@@ -22,98 +22,50 @@ class ShortsPlayerPage extends StatefulWidget {
 }
 
 class _ShortsPlayerPageState extends State<ShortsPlayerPage> {
-  VideoPlayerController? _controller;
-  Future<void>? _loadFuture;
-  String? _error;
-
   @override
   void initState() {
     super.initState();
+    widget.playback.addListener(_handlePlaybackChanged);
     if (widget.isActive) {
-      _ensureLoaded();
+      widget.playback.activate();
+    } else {
+      widget.playback.prepare();
     }
   }
 
   @override
   void didUpdateWidget(covariant ShortsPlayerPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.item.videoId != oldWidget.item.videoId) {
-      _disposeController();
-      _error = null;
-      _loadFuture = null;
+    if (widget.playback != oldWidget.playback) {
+      oldWidget.playback.removeListener(_handlePlaybackChanged);
+      oldWidget.playback.deactivate();
+      widget.playback.addListener(_handlePlaybackChanged);
       if (widget.isActive) {
-        _ensureLoaded();
+        widget.playback.activate();
+      } else {
+        widget.playback.prepare();
       }
       return;
     }
     if (widget.isActive != oldWidget.isActive) {
       if (widget.isActive) {
-        _ensureLoaded();
+        widget.playback.activate();
       } else {
-        _controller?.pause();
+        widget.playback.deactivate();
       }
     }
   }
 
   @override
   void dispose() {
-    _disposeController();
+    widget.playback.removeListener(_handlePlaybackChanged);
+    if (widget.isActive) {
+      widget.playback.deactivate();
+    }
     super.dispose();
   }
 
-  void _disposeController() {
-    final controller = _controller;
-    _controller = null;
-    controller?.dispose();
-  }
-
-  void _ensureLoaded() {
-    _loadFuture ??= _loadVideo();
-  }
-
-  Future<void> _loadVideo() async {
-    setState(() => _error = null);
-    try {
-      final url = await _playbackResolver.resolveMuxedUrl(widget.item.videoId);
-      if (!mounted) {
-        return;
-      }
-      final controller = VideoPlayerController.networkUrl(url);
-      await controller.initialize();
-      await controller.setLooping(true);
-      await controller.setVolume(1);
-      if (!mounted) {
-        await controller.dispose();
-        return;
-      }
-      _disposeController();
-      _controller = controller;
-      setState(() {});
-      if (widget.isActive) {
-        await controller.play();
-      }
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _loadFuture = null;
-        _error = '视频流加载失败';
-      });
-    }
-  }
-
-  Future<void> _togglePlayback() async {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) {
-      _ensureLoaded();
-      return;
-    }
-    if (controller.value.isPlaying) {
-      await controller.pause();
-    } else {
-      await controller.play();
-    }
+  void _handlePlaybackChanged() {
     if (mounted) {
       setState(() {});
     }
@@ -121,12 +73,12 @@ class _ShortsPlayerPageState extends State<ShortsPlayerPage> {
 
   @override
   Widget build(BuildContext context) {
-    final controller = _controller;
+    final controller = widget.playback.controller;
     final isReady = controller?.value.isInitialized == true;
     final isPlaying = controller?.value.isPlaying == true;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: _togglePlayback,
+      onTap: widget.playback.togglePlayback,
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -160,7 +112,7 @@ class _ShortsPlayerPageState extends State<ShortsPlayerPage> {
                 child: SizedBox(
                   width: 68,
                   height: 68,
-                  child: _error == null && !isReady
+                  child: widget.playback.error == null && !isReady
                       ? const Padding(
                           padding: EdgeInsets.all(22),
                           child: CircularProgressIndicator(
@@ -176,12 +128,12 @@ class _ShortsPlayerPageState extends State<ShortsPlayerPage> {
                 ),
               ),
             ),
-          if (_error != null)
+          if (widget.playback.error != null)
             Positioned(
               left: 16,
               right: 96,
               bottom: 132,
-              child: _InlineError(message: _error!),
+              child: _InlineError(message: widget.playback.error!),
             ),
           _MetaPanel(item: widget.item),
           _ActionRail(item: widget.item),
