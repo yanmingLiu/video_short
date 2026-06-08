@@ -183,41 +183,244 @@ class _ShortsPlayerPageState extends State<ShortsPlayerPage> {
               bottom: 132,
               child: _InlineError(message: _error!),
             ),
-          if (isReady) _PlaybackProgress(controller: controller!),
           _MetaPanel(item: widget.item),
           _ActionRail(item: widget.item),
+          if (isReady) _PlaybackProgress(controller: controller!),
         ],
       ),
     );
   }
 }
 
-class _PlaybackProgress extends StatelessWidget {
+class _PlaybackProgress extends StatefulWidget {
   const _PlaybackProgress({required this.controller});
 
   final VideoPlayerController controller;
 
   @override
+  State<_PlaybackProgress> createState() => _PlaybackProgressState();
+}
+
+class _PlaybackProgressState extends State<_PlaybackProgress> {
+  var _isScrubbing = false;
+  Duration? _scrubPosition;
+
+  VideoPlayerController get _controller => widget.controller;
+
+  @override
   Widget build(BuildContext context) {
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: 0,
-      child: SafeArea(
-        top: false,
-        child: VideoProgressIndicator(
-          controller,
-          allowScrubbing: true,
-          padding: EdgeInsets.zero,
-          colors: VideoProgressColors(
-            playedColor: Colors.white,
-            bufferedColor: Colors.white.withValues(alpha: 0.34),
-            backgroundColor: Colors.white.withValues(alpha: 0.18),
+    return ValueListenableBuilder<VideoPlayerValue>(
+      valueListenable: _controller,
+      builder: (context, value, child) {
+        final showBar = _isScrubbing || !value.isPlaying;
+        if (!value.isInitialized || value.duration <= Duration.zero) {
+          return const SizedBox.shrink();
+        }
+        final position = _scrubPosition ?? value.position;
+        final progress = _progressFor(position, value.duration);
+        return Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                _isScrubbing ? 28 : 30,
+                0,
+                _isScrubbing ? 28 : 30,
+                _isScrubbing ? 12 : 3,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 120),
+                    child: _isScrubbing
+                        ? Padding(
+                            key: const ValueKey('time'),
+                            padding: const EdgeInsets.only(bottom: 118),
+                            child: _ProgressTimeLabel(
+                              position: position,
+                              duration: value.duration,
+                            ),
+                          )
+                        : const SizedBox.shrink(key: ValueKey('empty-time')),
+                  ),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final width = constraints.maxWidth;
+                      return GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onHorizontalDragStart: (details) {
+                          _updateScrub(details.localPosition.dx, width);
+                        },
+                        onHorizontalDragUpdate: (details) {
+                          _updateScrub(details.localPosition.dx, width);
+                        },
+                        onHorizontalDragEnd: (_) => _commitScrub(),
+                        onHorizontalDragCancel: _commitScrub,
+                        onTapDown: (details) {
+                          _updateScrub(details.localPosition.dx, width);
+                        },
+                        onTapUp: (_) => _commitScrub(),
+                        onTapCancel: _commitScrub,
+                        child: SizedBox(
+                          height: _isScrubbing ? 28 : 14,
+                          child: Center(
+                            child: AnimatedOpacity(
+                              opacity: showBar ? 1 : 0,
+                              duration: const Duration(milliseconds: 120),
+                              child: _RoundedProgressBar(
+                                progress: progress,
+                                height: _isScrubbing ? 14 : 4,
+                                thumbRadius: _isScrubbing ? 10 : 0,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
+        );
+      },
+    );
+  }
+
+  void _updateScrub(double localX, double width) {
+    if (width <= 0) {
+      return;
+    }
+    final value = _controller.value;
+    final fraction = (localX / width).clamp(0.0, 1.0);
+    final position = value.duration * fraction;
+    setState(() {
+      _isScrubbing = true;
+      _scrubPosition = position;
+    });
+  }
+
+  Future<void> _commitScrub() async {
+    final position = _scrubPosition;
+    if (position != null) {
+      await _controller.seekTo(position);
+    }
+    if (mounted) {
+      setState(() {
+        _isScrubbing = false;
+        _scrubPosition = null;
+      });
+    }
+  }
+
+  double _progressFor(Duration position, Duration duration) {
+    if (duration <= Duration.zero) {
+      return 0;
+    }
+    return (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
+  }
+}
+
+class _RoundedProgressBar extends StatelessWidget {
+  const _RoundedProgressBar({
+    required this.progress,
+    required this.height,
+    required this.thumbRadius,
+  });
+
+  final double progress;
+  final double height;
+  final double thumbRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final trackWidth = constraints.maxWidth;
+        final playedWidth = trackWidth * progress;
+        return SizedBox(
+          height: thumbRadius > 0 ? thumbRadius * 2 : height,
+          child: Stack(
+            alignment: Alignment.centerLeft,
+            children: [
+              Container(
+                height: height,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.24),
+                  borderRadius: BorderRadius.circular(height / 2),
+                ),
+              ),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 80),
+                width: playedWidth,
+                height: height,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(height / 2),
+                ),
+              ),
+              if (thumbRadius > 0)
+                Positioned(
+                  left: (playedWidth - thumbRadius).clamp(
+                    0.0,
+                    (trackWidth - thumbRadius * 2).clamp(0.0, double.infinity),
+                  ),
+                  child: Container(
+                    width: thumbRadius * 2,
+                    height: thumbRadius * 2,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ProgressTimeLabel extends StatelessWidget {
+  const _ProgressTimeLabel({required this.position, required this.duration});
+
+  final Duration position;
+  final Duration duration;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: _formatDuration(position)),
+          const TextSpan(text: ' / '),
+          TextSpan(
+            text: _formatDuration(duration),
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.64)),
+          ),
+        ],
+      ),
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 36,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0,
       ),
     );
   }
+}
+
+String _formatDuration(Duration duration) {
+  final totalSeconds = duration.inSeconds;
+  final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+  final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+  return '$minutes:$seconds';
 }
 
 class _PosterImage extends StatelessWidget {
