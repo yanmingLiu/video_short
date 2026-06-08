@@ -1,12 +1,19 @@
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
-class YoutubePlaybackResolver {
+abstract interface class PlaybackUrlResolver {
+  Future<Uri> resolveMuxedUrl(String videoId);
+
+  void close();
+}
+
+class YoutubePlaybackResolver implements PlaybackUrlResolver {
   YoutubePlaybackResolver({YoutubeExplode? youtube})
     : _youtube = youtube ?? YoutubeExplode();
 
   final YoutubeExplode _youtube;
   final _cache = <String, Future<Uri>>{};
 
+  @override
   Future<Uri> resolveMuxedUrl(String videoId) {
     final cached = _cache[videoId];
     if (cached != null) {
@@ -32,6 +39,7 @@ class YoutubePlaybackResolver {
     throw StateError('没有找到可直接播放的音视频合一流：$videoId');
   }
 
+  @override
   void close() {
     _youtube.close();
   }

@@ -38,6 +38,10 @@ class YoutubeMwebApi {
   final Dio _dio;
   final YoutubeParser _parser;
 
+  void close() {
+    _dio.close(force: true);
+  }
+
   Future<InitialShortsPayload> fetchInitialShort(String videoId) async {
     final html = await fetchShortsPageHtml(videoId);
     final initialData = _parser.parseInitialDataFromPage(html);

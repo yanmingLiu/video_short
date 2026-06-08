@@ -1,6 +1,32 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_config.dart';
+
+final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
+  return const FlutterSecureStorage();
+});
+
+final configStoreProvider = Provider<ConfigStore>((ref) {
+  return ConfigStore(ref.watch(secureStorageProvider));
+});
+
+final appConfigProvider = AsyncNotifierProvider<AppConfigController, AppConfig>(
+  AppConfigController.new,
+);
+
+class AppConfigController extends AsyncNotifier<AppConfig> {
+  @override
+  Future<AppConfig> build() {
+    return ref.watch(configStoreProvider).load();
+  }
+
+  Future<void> save(AppConfig config) async {
+    state = const AsyncLoading();
+    await ref.watch(configStoreProvider).save(config);
+    state = AsyncData(config);
+  }
+}
 
 class ConfigStore {
   ConfigStore(this._storage);

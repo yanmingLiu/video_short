@@ -137,7 +137,11 @@ class _ShortsPlayerPageState extends State<ShortsPlayerPage> {
             ),
           _MetaPanel(item: widget.item),
           _ActionRail(item: widget.item),
-          if (isReady) _PlaybackProgress(controller: controller!),
+          if (isReady)
+            _PlaybackProgress(
+              controller: controller!,
+              onSeek: widget.playback.seekTo,
+            ),
         ],
       ),
     );
@@ -145,9 +149,10 @@ class _ShortsPlayerPageState extends State<ShortsPlayerPage> {
 }
 
 class _PlaybackProgress extends StatefulWidget {
-  const _PlaybackProgress({required this.controller});
+  const _PlaybackProgress({required this.controller, required this.onSeek});
 
   final VideoPlayerController controller;
+  final Future<void> Function(Duration position) onSeek;
 
   @override
   State<_PlaybackProgress> createState() => _PlaybackProgressState();
@@ -259,7 +264,7 @@ class _PlaybackProgressState extends State<_PlaybackProgress> {
   Future<void> _commitScrub() async {
     final position = _scrubPosition;
     if (position != null) {
-      await _controller.seekTo(position);
+      await widget.onSeek(position);
     }
     if (mounted) {
       setState(() {

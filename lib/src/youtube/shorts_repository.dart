@@ -15,6 +15,10 @@ class ShortsRepository {
   final YoutubeMwebApi _api;
   final YoutubeParser _parser;
 
+  void close() {
+    _api.close();
+  }
+
   void _log(String message) {
     developer.log(message, name: 'VideoShort.Repository');
   }
@@ -90,12 +94,12 @@ class ShortsRepository {
       _log('loadEndpoint skipped invalid endpoint videoId=${endpoint.videoId}');
       return const ShortsLoadResult(items: [], endpoints: []);
     }
-    final playerFuture = _api
-        .fetchPlayer(endpoint)
-        .catchError((_) => <String, dynamic>{});
-    final reelFuture = _api.fetchReelItem(endpoint);
-    final player = await playerFuture;
-    final reelPayload = await reelFuture;
+    final results = await Future.wait<Object>([
+      _api.fetchPlayer(endpoint).catchError((_) => <String, dynamic>{}),
+      _api.fetchReelItem(endpoint),
+    ]);
+    final player = results[0] as Map<String, dynamic>;
+    final reelPayload = results[1] as ReelItemPayload;
     final reel = reelPayload.item;
     final title = _parser.parsePlayerTitle(player);
     final endpoints = [

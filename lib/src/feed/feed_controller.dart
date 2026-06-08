@@ -1,37 +1,11 @@
 import 'dart:developer' as developer;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../core/app_config.dart';
 import '../core/config_store.dart';
 import '../youtube/shorts_item.dart';
 import '../youtube/shorts_repository.dart';
-
-final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
-  return const FlutterSecureStorage();
-});
-
-final configStoreProvider = Provider<ConfigStore>((ref) {
-  return ConfigStore(ref.watch(secureStorageProvider));
-});
-
-final appConfigProvider = AsyncNotifierProvider<AppConfigController, AppConfig>(
-  AppConfigController.new,
-);
-
-class AppConfigController extends AsyncNotifier<AppConfig> {
-  @override
-  Future<AppConfig> build() {
-    return ref.watch(configStoreProvider).load();
-  }
-
-  Future<void> save(AppConfig config) async {
-    state = const AsyncLoading();
-    await ref.watch(configStoreProvider).save(config);
-    state = AsyncData(config);
-  }
-}
 
 final feedProvider = AsyncNotifierProvider<FeedController, FeedState>(
   FeedController.new,
@@ -41,7 +15,7 @@ const _targetBufferedItems = 8;
 const _minRemainingBufferedItems = 4;
 
 class FeedController extends AsyncNotifier<FeedState> {
-  late ShortsRepository _repository;
+  ShortsRepository? _repository;
 
   void _log(String message) {
     developer.log(message, name: 'VideoShort.Feed');
@@ -49,10 +23,20 @@ class FeedController extends AsyncNotifier<FeedState> {
 
   @override
   Future<FeedState> build() async {
+    ref.onDispose(() {
+      _repository?.close();
+      _repository = null;
+    });
     final config = await ref.watch(appConfigProvider.future);
-    _repository = ShortsRepository(config);
+    return _loadWithConfig(config);
+  }
+
+  Future<FeedState> _loadWithConfig(AppConfig config) async {
+    _repository?.close();
+    final repository = ShortsRepository(config);
+    _repository = repository;
     _log('build seed=${config.seedUrl}');
-    final loaded = await _repository.loadInitial();
+    final loaded = await repository.loadInitial();
     final initial = FeedState(
       items: loaded.items,
       queue: loaded.endpoints,
@@ -73,7 +57,10 @@ class FeedController extends AsyncNotifier<FeedState> {
 
   Future<void> refresh() async {
     state = const AsyncLoading();
-    state = await AsyncValue.guard(build);
+    state = await AsyncValue.guard(() async {
+      final config = await ref.read(appConfigProvider.future);
+      return _loadWithConfig(config);
+    });
   }
 
   Future<void> loadNextForSwipe(int index) async {
@@ -140,7 +127,7 @@ class FeedController extends AsyncNotifier<FeedState> {
         '_loadNext request=${endpoint.videoId} items=${current.items.length} '
         'queue=${current.queue.length}',
       );
-      final loaded = await _repository.loadEndpoint(
+      final loaded = await _repository!.loadEndpoint(
         endpoint,
         sequenceContinuationToken: current.sequenceContinuationToken,
         sequenceClickTrackingParams: current.sequenceClickTrackingParams,
@@ -197,7 +184,7 @@ class FeedController extends AsyncNotifier<FeedState> {
 
   Future<FeedState> _loadSequenceContinuation(FeedState value) async {
     try {
-      final loaded = await _repository.loadSequenceContinuation(
+      final loaded = await _repository!.loadSequenceContinuation(
         continuationToken: value.sequenceContinuationToken,
         clickTrackingParams: value.sequenceClickTrackingParams,
       );

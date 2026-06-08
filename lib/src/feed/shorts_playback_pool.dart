@@ -13,10 +13,10 @@ const _keepPreviousCount = 2;
 const _keepNextCount = 5;
 
 class ShortsPlaybackPool {
-  ShortsPlaybackPool({YoutubePlaybackResolver? resolver})
+  ShortsPlaybackPool({PlaybackUrlResolver? resolver})
     : _resolver = resolver ?? YoutubePlaybackResolver();
 
-  final YoutubePlaybackResolver _resolver;
+  final PlaybackUrlResolver _resolver;
   final _entries = <String, ShortsPlaybackEntry>{};
 
   ShortsPlaybackEntry entryFor(String videoId) {
@@ -88,11 +88,11 @@ class ShortsPlaybackPool {
 class ShortsPlaybackEntry extends ChangeNotifier {
   ShortsPlaybackEntry({
     required this.videoId,
-    required YoutubePlaybackResolver resolver,
+    required PlaybackUrlResolver resolver,
   }) : _resolver = resolver;
 
   final String videoId;
-  final YoutubePlaybackResolver _resolver;
+  final PlaybackUrlResolver _resolver;
 
   VideoPlayerController? _controller;
   Future<void>? _prepareFuture;
@@ -129,7 +129,9 @@ class ShortsPlaybackEntry extends ChangeNotifier {
 
   Future<void> deactivate() async {
     _wantsPlay = false;
-    await _controller?.pause();
+    await _guardPlaybackCommand(() async {
+      await _controller?.pause();
+    });
     _notifyIfAlive();
   }
 
@@ -141,12 +143,22 @@ class ShortsPlaybackEntry extends ChangeNotifier {
     }
     if (controller.value.isPlaying) {
       _wantsPlay = false;
-      await controller.pause();
+      await _guardPlaybackCommand(controller.pause);
     } else {
       _wantsPlay = true;
-      await controller.play();
+      await _guardPlaybackCommand(controller.play);
     }
     _notifyIfAlive();
+  }
+
+  Future<void> seekTo(Duration position) {
+    return _guardPlaybackCommand(() async {
+      final controller = _controller;
+      if (controller == null || !controller.value.isInitialized) {
+        return;
+      }
+      await controller.seekTo(position);
+    });
   }
 
   void release() {
@@ -158,7 +170,7 @@ class ShortsPlaybackEntry extends ChangeNotifier {
     final controller = _controller;
     _controller = null;
     _notifyIfAlive();
-    unawaited(controller?.dispose() ?? Future<void>.value());
+    unawaited(_disposeController(controller));
   }
 
   Future<void> _prepare(int generation) async {
@@ -176,13 +188,13 @@ class ShortsPlaybackEntry extends ChangeNotifier {
       await nextController.setLooping(true);
       await nextController.setVolume(1);
       if (!_isCurrent(generation)) {
-        await nextController.dispose();
+        await _disposeController(nextController);
         return;
       }
       final oldController = _controller;
       _controller = nextController;
       nextController = null;
-      unawaited(oldController?.dispose() ?? Future<void>.value());
+      unawaited(_disposeController(oldController));
       _error = null;
       _notifyIfAlive();
       await _playIfWanted();
@@ -194,7 +206,7 @@ class ShortsPlaybackEntry extends ChangeNotifier {
       _error = '视频流加载失败';
       _notifyIfAlive();
       if (nextController != null) {
-        unawaited(nextController.dispose());
+        unawaited(_disposeController(nextController));
       }
     }
   }
@@ -207,8 +219,30 @@ class ShortsPlaybackEntry extends ChangeNotifier {
         _isReleased) {
       return;
     }
-    await controller.play();
+    await _guardPlaybackCommand(controller.play);
     _notifyIfAlive();
+  }
+
+  Future<void> _guardPlaybackCommand(Future<void> Function() command) async {
+    try {
+      await command();
+    } catch (_) {
+      if (_isDisposed) {
+        return;
+      }
+      _error = '视频流加载失败';
+    }
+  }
+
+  Future<void> _disposeController(VideoPlayerController? controller) async {
+    if (controller == null) {
+      return;
+    }
+    try {
+      await controller.dispose();
+    } catch (_) {
+      // Disposing is best-effort during rapid page changes.
+    }
   }
 
   bool _isCurrent(int generation) {
@@ -228,7 +262,7 @@ class ShortsPlaybackEntry extends ChangeNotifier {
     _isDisposed = true;
     final controller = _controller;
     _controller = null;
-    unawaited(controller?.dispose() ?? Future<void>.value());
+    unawaited(_disposeController(controller));
     super.dispose();
   }
 }
