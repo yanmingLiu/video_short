@@ -81,7 +81,7 @@ class _ShortsPlayerPageState extends State<ShortsPlayerPage> {
       final controller = VideoPlayerController.networkUrl(url);
       await controller.initialize();
       await controller.setLooping(true);
-      await controller.setVolume(0);
+      await controller.setVolume(1);
       if (!mounted) {
         await controller.dispose();
         return;
@@ -183,9 +183,38 @@ class _ShortsPlayerPageState extends State<ShortsPlayerPage> {
               bottom: 132,
               child: _InlineError(message: _error!),
             ),
+          if (isReady) _PlaybackProgress(controller: controller!),
           _MetaPanel(item: widget.item),
           _ActionRail(item: widget.item),
         ],
+      ),
+    );
+  }
+}
+
+class _PlaybackProgress extends StatelessWidget {
+  const _PlaybackProgress({required this.controller});
+
+  final VideoPlayerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: SafeArea(
+        top: false,
+        child: VideoProgressIndicator(
+          controller,
+          allowScrubbing: true,
+          padding: EdgeInsets.zero,
+          colors: VideoProgressColors(
+            playedColor: Colors.white,
+            bufferedColor: Colors.white.withValues(alpha: 0.34),
+            backgroundColor: Colors.white.withValues(alpha: 0.18),
+          ),
+        ),
       ),
     );
   }
