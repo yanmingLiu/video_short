@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
 
 import '../youtube/shorts_item.dart';
+import '../youtube/youtube_playback_resolver.dart';
 
-class ShortsPlayerPage extends StatelessWidget {
+final _playbackResolver = YoutubePlaybackResolver();
+
+class ShortsPlayerPage extends StatefulWidget {
   const ShortsPlayerPage({
     super.key,
     required this.item,
@@ -15,36 +18,175 @@ class ShortsPlayerPage extends StatelessWidget {
   final bool isActive;
 
   @override
+  State<ShortsPlayerPage> createState() => _ShortsPlayerPageState();
+}
+
+class _ShortsPlayerPageState extends State<ShortsPlayerPage> {
+  VideoPlayerController? _controller;
+  Future<void>? _loadFuture;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isActive) {
+      _ensureLoaded();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ShortsPlayerPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.item.videoId != oldWidget.item.videoId) {
+      _disposeController();
+      _error = null;
+      _loadFuture = null;
+      if (widget.isActive) {
+        _ensureLoaded();
+      }
+      return;
+    }
+    if (widget.isActive != oldWidget.isActive) {
+      if (widget.isActive) {
+        _ensureLoaded();
+      } else {
+        _controller?.pause();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposeController();
+    super.dispose();
+  }
+
+  void _disposeController() {
+    final controller = _controller;
+    _controller = null;
+    controller?.dispose();
+  }
+
+  void _ensureLoaded() {
+    _loadFuture ??= _loadVideo();
+  }
+
+  Future<void> _loadVideo() async {
+    setState(() => _error = null);
+    try {
+      final url = await _playbackResolver.resolveMuxedUrl(widget.item.videoId);
+      if (!mounted) {
+        return;
+      }
+      final controller = VideoPlayerController.networkUrl(url);
+      await controller.initialize();
+      await controller.setLooping(true);
+      await controller.setVolume(0);
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      _disposeController();
+      _controller = controller;
+      setState(() {});
+      if (widget.isActive) {
+        await controller.play();
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadFuture = null;
+        _error = '视频流加载失败';
+      });
+    }
+  }
+
+  Future<void> _togglePlayback() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      _ensureLoaded();
+      return;
+    }
+    if (controller.value.isPlaying) {
+      await controller.pause();
+    } else {
+      await controller.play();
+    }
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        ColoredBox(
-          color: Colors.black,
-          child: Center(
-            child: AspectRatio(
-              aspectRatio: 9 / 16,
-              child: _PosterImage(item: item),
+    final controller = _controller;
+    final isReady = controller?.value.isInitialized == true;
+    final isPlaying = controller?.value.isPlaying == true;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _togglePlayback,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ColoredBox(
+            color: Colors.black,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _PosterImage(item: widget.item),
+                if (isReady)
+                  FittedBox(
+                    fit: BoxFit.cover,
+                    clipBehavior: Clip.hardEdge,
+                    child: SizedBox(
+                      width: controller!.value.size.width,
+                      height: controller.value.size.height,
+                      child: VideoPlayer(controller),
+                    ),
+                  ),
+              ],
             ),
           ),
-        ),
-        const _TopScrim(),
-        Center(
-          child: IconButton(
-            tooltip: '打开视频',
-            onPressed: () => _open(item.pageUrl),
-            style: IconButton.styleFrom(
-              backgroundColor: Colors.black.withValues(alpha: 0.42),
-              foregroundColor: Colors.white,
-              fixedSize: const Size(68, 68),
-              shape: const CircleBorder(),
+          const _TopScrim(),
+          if (!isReady || !isPlaying)
+            Center(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.42),
+                  shape: BoxShape.circle,
+                ),
+                child: SizedBox(
+                  width: 68,
+                  height: 68,
+                  child: _error == null && !isReady
+                      ? const Padding(
+                          padding: EdgeInsets.all(22),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.play_arrow,
+                          color: Colors.white,
+                          size: 42,
+                        ),
+                ),
+              ),
             ),
-            icon: const Icon(Icons.play_arrow, size: 42),
-          ),
-        ),
-        _MetaPanel(item: item),
-        _ActionRail(item: item),
-      ],
+          if (_error != null)
+            Positioned(
+              left: 16,
+              right: 96,
+              bottom: 132,
+              child: _InlineError(message: _error!),
+            ),
+          _MetaPanel(item: widget.item),
+          _ActionRail(item: widget.item),
+        ],
+      ),
     );
   }
 }
@@ -126,11 +268,11 @@ class _TopScrim extends StatelessWidget {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Colors.black.withValues(alpha: 0.48),
+              Colors.black.withValues(alpha: 0.18),
               Colors.transparent,
               Colors.black.withValues(alpha: 0.78),
             ],
-            stops: const [0, 0.38, 1],
+            stops: const [0, 0.44, 1],
           ),
         ),
       ),
@@ -187,7 +329,7 @@ class _MetaPanel extends StatelessWidget {
                           borderRadius: BorderRadius.circular(17),
                         ),
                       ),
-                      onPressed: () => _open(item.pageUrl),
+                      onPressed: () {},
                       child: const Text('订阅'),
                     ),
                   ),
@@ -217,7 +359,7 @@ class _MetaPanel extends StatelessWidget {
                       borderRadius: BorderRadius.circular(6),
                     ),
                   ),
-                  onPressed: () => _open(item.pageUrl),
+                  onPressed: () {},
                   icon: const Icon(Icons.music_note, size: 16),
                   label: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 220),
@@ -255,17 +397,17 @@ class _ActionRail extends StatelessWidget {
               _ActionButton(
                 icon: Icons.thumb_up_alt_outlined,
                 label: item.likeText.isEmpty ? '赞' : item.likeText,
-                onTap: () => _open(item.pageUrl),
+                onTap: () {},
               ),
               _ActionButton(
                 icon: Icons.thumb_down_alt_outlined,
                 label: item.dislikeText,
-                onTap: () => _open(item.pageUrl),
+                onTap: () {},
               ),
               _ActionButton(
                 icon: Icons.mode_comment_outlined,
                 label: item.commentText.isEmpty ? '评论' : item.commentText,
-                onTap: () => _open('${item.pageUrl}?feature=share'),
+                onTap: () {},
               ),
               _ActionButton(
                 icon: Icons.share,
@@ -345,7 +487,28 @@ class _ThumbnailDisc extends StatelessWidget {
   }
 }
 
-Future<void> _open(String url) async {
-  final uri = Uri.parse(url);
-  await launchUrl(uri, mode: LaunchMode.externalApplication);
+class _InlineError extends StatelessWidget {
+  const _InlineError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.68),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Text(
+          message,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.white, fontSize: 13),
+        ),
+      ),
+    );
+  }
 }
